@@ -3,37 +3,8 @@ const ECDSA = require('ecdsa-secp256r1/browser');
 
 // The Firebase Admin SDK to access the Firebase Realtime Database.
 const admin = require('firebase-admin');
-/*
-const config = {
-    apiKey: "AIzaSyDwzuyK5F6qchMcstlWLx6zsopw-MCqKeA",
-    authDomain: "greencash-demo.firebaseapp.com",
-    databaseURL: "https://greencash-demo.firebaseio.com",
-    projectId: "greencash-demo",
-    storageBucket: "greencash-demo.appspot.com",
-    messagingSenderId: "998374524235"
-}
-*/
 admin.initializeApp();
 
-// Content example
-/*
-    {
-        "content":"{\
-            "info\": {
-                \"log\":121.56878,
-                \"lat\":25.03452,
-                \"name\":\"GreenCash Demo No.0001\",
-                \"id\":\"DEMO0001\"
-            },
-            \"content\":{
-                \"bottle\":1,
-                \"can\":2
-            },
-            \"time\":1545663734706
-        }","signature":
-            "IuLg6SFSxK6jYeK8u+aLT9pRm7zl3dS2UItMGYn4GrmF70/2USULKDaW9ugDdFjaIOy4OegyI92gg033wDpm9A=="
-    }
-*/
 const DepositeTrans = (original) => {
     console.log(JSON.stringify(original));
     let recycle = original.content.recycle.can + original.content.recycle.bottle;
@@ -48,7 +19,6 @@ const DepositeTrans = (original) => {
         cashdelta, rightdelta, roundeddelta
     }
 }
-
 
 const contentBelongs = (content, usr) => {
     return Promise.all([admin.database().ref(`/contents/${content.content.info.id}/${content.content.time}`).once('value'), content, usr]);
@@ -73,7 +43,7 @@ const deposite = (content, user) => {
     // Add content to used content list
     return admin.database().ref(`/contents/${content.content.info.id}`).update({ [`${content.content.time}`]: user })
         .then(() => {
-            return admin.database().ref(`/users/${user}`).child(`transitions`).update({[`${content.content.time}`]: transition});
+            return admin.database().ref(`/users/${user}`).child(`transitions`).update({ [`${content.content.time}`]: transition });
         });
 }
 
@@ -106,4 +76,43 @@ exports.deposite = functions.https.onRequest((request, response) => {
     }).catch(e => {
         return response.status(500).send(e.message);
     });
+});
+
+const executeTransition = (user, delta) => {
+    return admin.database().ref(`/users/${user}`).once('value', snapshot => {
+        let originArr = [];
+        if (snapshot && snapshot.val()) {
+            let origin = snapshot.val()
+            originArr = [origin.recycle, origin.cash, origin.right, origin.saved];
+        } else {
+            originArr =  [0, 0, 0, 0];
+        }
+
+        originArr = originArr.map(x => x? x : 0);
+        [recycleBase, cashBase, rightBase, savedBase] = originArr;
+
+        let recycle = recycleBase + delta.recycle;
+        let roundDelta = Math.floor(recycle / 8);
+        recycle = recycle % 8;
+        let cash = cashBase + delta.cash + roundDelta;
+        let right = rightBase + delta.right + roundDelta;
+        
+        return admin.database().ref(`/users/${user}`).update({
+            recycle, cash, right,
+            saved: savedBase + delta.saved
+        });
+    });
+}
+
+// Throttling trigger
+exports.execTransit = functions.database.ref('/users/{userID}/transitions/{eventTime}').onCreate((snap, context) => {
+    let content = snap.val();
+    let delta = {
+        recycle: content.roundeddelta,
+        cash: content.cashdelta,
+        right: content.rightdelta,
+        saved: content.savedcashdelta
+    };
+
+    return executeTransition(context.params.userID, delta);
 });

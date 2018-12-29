@@ -10,8 +10,8 @@ const machineInfo = {
 let qr_str = {
     info: machineInfo,
     recycle: {
-        bottle: 1,
-        can: 2,
+        bottle: 7,
+        can: 15,
     },
     time: (new Date()).getTime()
 };
