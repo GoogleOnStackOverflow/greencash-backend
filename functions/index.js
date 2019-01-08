@@ -5,6 +5,13 @@ const ECDSA = require('ecdsa-secp256r1/browser');
 const admin = require('firebase-admin');
 admin.initializeApp();
 
+// verify an id_tkn
+const GetUidFromTkn = (tkn) => {
+    return admin.auth().verifyIdToken(tkn).then(decodedToken => {
+        return decodedToken.uid;
+    });
+}
+
 const DepositeTrans = (original) => {
     console.log(JSON.stringify(original));
     let recycle = original.content.recycle.can + original.content.recycle.bottle;
@@ -47,9 +54,6 @@ const deposite = (content, user) => {
         });
 }
 
-// // Create and Deploy Your First Cloud Functions
-// // https://firebase.google.com/docs/functions/write-firebase-functions
-//
 exports.deposite = functions.https.onRequest((request, response) => {
     let content = request.query.content;
     let usr = request.query.usr;
@@ -78,6 +82,85 @@ exports.deposite = functions.https.onRequest((request, response) => {
     });
 });
 
+exports.saveByFirebaseTkn = functions.https.onRequest((request, response) => {
+    let amount = request.query.amount;
+    let usr = request.query.usr;
+
+    if (!amount || !usr) {
+        return response.status(400).send('Bad Request');
+    }
+
+    return Promise.all([GetUidFromTkn(usr), amount]).then(([uid, amount]) => {
+        return  Promise.all([admin.database().ref(`/users/${uid}`).once('value'), uid, amount]);
+    }).then(([snapshot, uid, amount]) => {
+        if (snapshot && snapshot.val()) {
+            return Promise.all([snapshot.val().cash >= amount, uid, amount])
+        } else {
+            return response.status(403).send('User Not Found');
+        }
+    }).then(([isValid, uid, amount]) => {
+        if (!isValid) {
+            return response.status(403).send('Cash not enough');
+        } else {
+            let tran = {
+                original: '',
+                counterparty: 'GREENCASH BANK',
+                time: (new Date()).getTime(),
+                savedcashdelta: amount,
+                cashdelta: -1 * amount, 
+                rightdelta: 0, 
+                roundeddelta: 0
+            }
+
+            return admin.database().ref(`/users/${uid}`).child(`transitions`).update({ 
+                [`${tran.time}`]: tran });
+        }
+    }).then(() => {
+        return response.status(200).send('OK');
+    }).catch(e => {
+        return response.status(500).send(e.message);
+    });
+});
+
+exports.save = functions.https.onRequest((request, response) => {
+    let amount = request.query.amount;
+    let usr = request.query.usr;
+
+    if (!amount || !usr) {
+        return response.status(400).send('Bad Request');
+    }
+
+    return Promise.all([admin.database().ref(`/users/${usr}`).once('value'), usr, amount])
+    .then(([snapshot, uid, amount]) => {
+        if (snapshot && snapshot.val()) {
+            return Promise.all([snapshot.val().cash >= amount, uid, amount])
+        } else {
+            return response.status(403).send('User Not Found');
+        }
+    }).then(([isValid, uid, amount]) => {
+        if (!isValid) {
+            return response.status(403).send('Cash not enough');
+        } else {
+            let tran = {
+                original: '',
+                counterparty: 'GREENCASH BANK',
+                time: (new Date()).getTime(),
+                savedcashdelta: amount,
+                cashdelta: -1 * amount, 
+                rightdelta: 0, 
+                roundeddelta: 0
+            }
+
+            return admin.database().ref(`/users/${uid}`).child(`transitions`).update({ 
+                [`${tran.time}`]: tran });
+        }
+    }).then(() => {
+        return response.status(200).send('OK');
+    }).catch(e => {
+        return response.status(500).send(e.message);
+    });
+});
+
 const executeTransition = (user, delta) => {
     return admin.database().ref(`/users/${user}`).once('value', snapshot => {
         let originArr = [];
@@ -85,10 +168,10 @@ const executeTransition = (user, delta) => {
             let origin = snapshot.val()
             originArr = [origin.recycle, origin.cash, origin.right, origin.saved];
         } else {
-            originArr =  [0, 0, 0, 0];
+            originArr = [0, 0, 0, 0];
         }
 
-        originArr = originArr.map(x => x? x : 0);
+        originArr = originArr.map(x => x ? x : 0);
         [recycleBase, cashBase, rightBase, savedBase] = originArr;
 
         let recycle = recycleBase + delta.recycle;
@@ -96,7 +179,7 @@ const executeTransition = (user, delta) => {
         recycle = recycle % 8;
         let cash = cashBase + delta.cash + roundDelta;
         let right = rightBase + delta.right + roundDelta;
-        
+
         return admin.database().ref(`/users/${user}`).update({
             recycle, cash, right,
             saved: savedBase + delta.saved
@@ -104,7 +187,7 @@ const executeTransition = (user, delta) => {
     });
 }
 
-// Throttling trigger
+// execTransition
 exports.execTransit = functions.database.ref('/users/{userID}/transitions/{eventTime}').onCreate((snap, context) => {
     let content = snap.val();
     let delta = {

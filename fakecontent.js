@@ -1,9 +1,6 @@
 const ECDSA = require('ecdsa-secp256r1');
 
 const machineInfo = {
-    log: 121.568780,
-    lat: 25.034520,
-    name: 'GreenCash Demo No.0001',
     id: 'DEMO0001'
 };
 
